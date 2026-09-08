@@ -1,1 +1,1 @@
-{"name":"tigergate-test-javascript","private":true,"type":"module","scripts":{"test":"node tests/test_app.js"}}
+{"name":"tigergate-test-javascript","private":true,"type":"module","scripts":{"test":"node tests/test_app.js"},"dependencies":{"lodash":"4.17.15"}}

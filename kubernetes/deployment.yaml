@@ -1,0 +1,15 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tigergate-test-javascript
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: tigergate-test-javascript }
+  template:
+    metadata:
+      labels: { app: tigergate-test-javascript }
+    spec:
+      containers:
+        - name: app
+          image: tigergate-test-javascript:latest

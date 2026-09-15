@@ -1,3 +1,38 @@
+# Deliberately insecure Compose file for IaC scanner validation. Do not run.
 services:
   app:
     build: .
+    image: tigergate-test-javascript:latest
+    # FIX-IAC-010: privileged container with host namespaces
+    privileged: true
+    network_mode: host
+    pid: host
+    ipc: host
+    # FIX-IAC-011: dangerous capabilities, no-new-privileges off, seccomp/apparmor disabled
+    cap_add: [SYS_ADMIN, NET_ADMIN, SYS_PTRACE, ALL]
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+    # FIX-IAC-012: docker socket and host root mounted
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /:/host
+      - /etc:/etc:rw
+    # FIX-IAC-013: secrets in plaintext environment; port bound on all interfaces
+    environment:
+      DATABASE_URL: postgres://admin:SuperSecretP4ssw0rd!@db:5432/production
+      JWT_SECRET: super-secret-jwt-key
+      AWS_SECRET_ACCESS_KEY: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+    ports:
+      - "0.0.0.0:3000:3000"
+      - "22:22"
+    restart: always
+  db:
+    # FIX-IAC-014: unpinned DB image, trust auth, root password in env, data dir world-exposed
+    image: postgres
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    user: root

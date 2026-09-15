@@ -1,0 +1,4 @@
+node_modules/
+terraform/.terraform/
+# NOTE: .env, *.pem and config/*.json are intentionally NOT ignored.
+# This repo exists to test whether scanners catch committed secrets.

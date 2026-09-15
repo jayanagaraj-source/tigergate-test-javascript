@@ -1,0 +1,70 @@
+# Deliberately insecure CloudFormation template for IaC scanner validation. Do not deploy.
+AWSTemplateFormatVersion: "2010-09-09"
+Description: TigerGate fixture stack
+Parameters:
+  # FIX-IAC-070: password parameter with a default and NoEcho off
+  DbPassword:
+    Type: String
+    Default: SuperSecretP4ssw0rd!
+    NoEcho: false
+Resources:
+  # FIX-IAC-071: security group open to the world
+  OpenSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: open
+      SecurityGroupIngress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+  # FIX-IAC-072: public, unencrypted bucket without versioning/logging
+  PublicBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: PublicRead
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+  # FIX-IAC-073: RDS public + unencrypted + plaintext password
+  Database:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      Engine: mysql
+      DBInstanceClass: db.t3.micro
+      AllocatedStorage: "20"
+      MasterUsername: admin
+      MasterUserPassword: !Ref DbPassword
+      PubliclyAccessible: true
+      StorageEncrypted: false
+      BackupRetentionPeriod: 0
+      DeletionProtection: false
+  # FIX-IAC-074: star-star IAM role
+  AdminRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { AWS: "*" }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: everything
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: "*"
+                Resource: "*"
+  # FIX-IAC-075: Lambda with secret in env, old runtime
+  Function:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: nodejs12.x
+      Handler: index.handler
+      Role: !GetAtt AdminRole.Arn
+      Code: { ZipFile: "exports.handler = async () => 'fixture'" }
+      Environment:
+        Variables:
+          API_KEY: sk_live_FIXTUREfixtureFIXTUREfixt

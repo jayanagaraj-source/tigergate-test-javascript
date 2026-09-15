@@ -1,0 +1,57 @@
+# Deliberately insecure GitHub Actions workflow for CI/CD scanner validation. Never enable on a real repo.
+name: Insecure CI fixture
+on:
+  # FIX-IAC-080: pull_request_target combined with checkout of the PR head (pwn request)
+  pull_request_target:
+    types: [opened, synchronize]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+
+# FIX-IAC-081: overly broad token permissions
+permissions: write-all
+
+env:
+  # FIX-SEC-022: secret hardcoded in workflow env
+  NPM_TOKEN: npm_FIXTUREfixtureFIXTUREfixtureFIXTURE0
+  AWS_SECRET_ACCESS_KEY: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # FIX-IAC-082: actions pinned to mutable refs instead of commit SHAs
+      - uses: actions/checkout@master
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: true
+      - uses: some-org/unknown-action@main
+
+      # FIX-IAC-083: script injection — untrusted event data interpolated into a shell
+      - name: Greet
+        run: echo "PR title is ${{ github.event.pull_request.title }}"
+      - name: Comment echo
+        run: echo "${{ github.event.comment.body }}" | bash
+
+      # FIX-IAC-084: secrets echoed / written to artifacts
+      - name: Dump secrets
+        run: |
+          echo "${{ secrets.DEPLOY_KEY }}"
+          echo "${{ toJSON(secrets) }}" > secrets.json
+      - uses: actions/upload-artifact@v3
+        with: { name: build, path: . }
+
+      # FIX-IAC-085: remote script piped to shell, sudo, TLS verification off
+      - run: curl -k -sSL http://get.example.com/install.sh | sudo bash
+
+      # FIX-IAC-086: security step allowed to fail silently
+      - name: Audit
+        run: npm audit
+        continue-on-error: true
+
+      # FIX-IAC-087: self-hosted runner used for untrusted PR code
+  deploy:
+    runs-on: self-hosted
+    needs: build
+    steps:
+      - run: ./scripts/deploy.sh

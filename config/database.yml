@@ -1,0 +1,7 @@
+# FIX-SEC-011: plaintext DB credentials in YAML config.
+production:
+  adapter: postgresql
+  host: db.internal.example.com
+  username: app_prod
+  password: Pr0duct10n-Fixture-Passw0rd
+  database: app_production

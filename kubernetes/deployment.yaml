@@ -1,7 +1,9 @@
+# Deliberately insecure Kubernetes manifests for IaC scanner validation. Do not apply.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: tigergate-test-javascript
+  namespace: default
 spec:
   replicas: 1
   selector:
@@ -10,13 +12,58 @@ spec:
     metadata:
       labels: { app: tigergate-test-javascript }
     spec:
-      hostNetwork: true # Deliberately insecure IaC fixture.
+      # FIX-IAC-020: host namespaces shared
+      hostNetwork: true
+      hostPID: true
+      hostIPC: true
+      # FIX-IAC-021: default SA token auto-mounted, no seccomp profile
+      automountServiceAccountToken: true
+      serviceAccountName: default
       containers:
         - name: app
+          # FIX-IAC-022: mutable tag, always pull not set
           image: tigergate-test-javascript:latest
+          imagePullPolicy: IfNotPresent
+          # FIX-IAC-023: privileged, root, privilege escalation, writable root fs, all caps
           securityContext:
             privileged: true
             runAsUser: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: true
+            readOnlyRootFilesystem: false
+            capabilities:
+              add: [SYS_ADMIN, NET_RAW, ALL]
+          # FIX-IAC-024: no resource requests/limits, no liveness/readiness probes
+          ports:
+            - containerPort: 3000
+              hostPort: 3000
+          # FIX-IAC-025: secrets as plain env values instead of secretKeyRef
           env:
             - name: DATABASE_PASSWORD
               value: "fixture-password-not-real"
+            - name: AWS_SECRET_ACCESS_KEY
+              value: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+          volumeMounts:
+            - name: host-root
+              mountPath: /host
+            - name: docker-sock
+              mountPath: /var/run/docker.sock
+      # FIX-IAC-026: hostPath mounts of / and the docker socket
+      volumes:
+        - name: host-root
+          hostPath: { path: / }
+        - name: docker-sock
+          hostPath: { path: /var/run/docker.sock }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tigergate-test-javascript
+spec:
+  # FIX-IAC-027: NodePort / LoadBalancer exposing the pod publicly
+  type: LoadBalancer
+  selector: { app: tigergate-test-javascript }
+  ports:
+    - port: 80
+      targetPort: 3000
+      nodePort: 30080

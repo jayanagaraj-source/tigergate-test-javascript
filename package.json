@@ -1,1 +1,68 @@
-{"name":"tigergate-test-javascript","private":true,"type":"module","scripts":{"test":"node tests/test_app.js"},"dependencies":{"lodash":"4.17.15"}}
+{
+  "name": "tigergate-test-javascript",
+  "version": "1.0.0",
+  "description": "Deliberately insecure fixture repo for validating SCA, SAST, secret, IaC and SBOM scanners. Never deploy.",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "author": "TigerGate fixtures",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/example/tigergate-test-javascript.git"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node tests/test_app.js",
+    "check-login": "node src/check-login.js",
+    "start": "echo 'Refusing to start: src/server.js is a scanner fixture, not an app. See SECURITY_FIXTURES.md' && exit 1",
+    "fixtures": "node scripts/list-fixtures.js"
+  },
+  "dependencies": {
+    "axios": "0.21.0",
+    "body-parser": "1.18.2",
+    "cookie-parser": "1.4.4",
+    "debug": "2.6.8",
+    "decode-uri-component": "0.2.0",
+    "dompurify": "2.0.0",
+    "ejs": "3.1.6",
+    "express": "4.16.0",
+    "handlebars": "4.0.11",
+    "js-yaml": "3.13.0",
+    "jsonwebtoken": "8.5.1",
+    "jsreport-core": "2.0.0",
+    "jszip": "3.2.0",
+    "left-pad": "1.3.0",
+    "lodash": "4.17.15",
+    "marked": "0.3.6",
+    "minimist": "1.2.0",
+    "moment": "2.29.1",
+    "mongoose": "5.7.5",
+    "mysql": "2.17.1",
+    "node-fetch": "2.6.0",
+    "node-forge": "0.9.0",
+    "node-serialize": "0.0.4",
+    "qs": "6.5.2",
+    "request": "2.88.2",
+    "semver": "5.7.1",
+    "serialize-javascript": "2.1.0",
+    "serve-index": "1.9.1",
+    "shelljs": "0.8.4",
+    "tar": "4.4.10",
+    "tough-cookie": "4.1.2",
+    "ua-parser-js": "0.7.28",
+    "underscore": "1.12.0",
+    "validator": "10.11.0",
+    "vm2": "3.9.11",
+    "ws": "5.2.2",
+    "xml2js": "0.4.23"
+  },
+  "devDependencies": {
+    "mocha": "6.1.4",
+    "nodemon": "1.18.0"
+  },
+  "optionalDependencies": {
+    "libxmljs": "0.19.7"
+  }
+}

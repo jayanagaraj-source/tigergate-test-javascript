@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Fixture page — deliberately insecure client-side code</title>
+  <!-- FIX-SAST-150 CWE-829: third-party script over plain HTTP, no Subresource Integrity -->
+  <script src="http://code.jquery.com/jquery-1.12.4.min.js"></script>
+  <script src="https://cdn.example.com/analytics.js"></script>
+  <!-- FIX-SCA-031: vendored, outdated jQuery (retire.js-style detection) -->
+  <script src="vendor/jquery-1.12.4.min.js"></script>
+  <!-- FIX-SAST-151 CWE-1021: no CSP / no frame-ancestors, plus inline handlers -->
+</head>
+<body onload="init()">
+  <div id="out"></div>
+  <a href="#" onclick="go(location.hash)">go</a>
+  <script>
+    // FIX-SAST-152 CWE-79 DOM XSS: location.hash -> innerHTML
+    function init() {
+      document.getElementById('out').innerHTML = decodeURIComponent(location.hash.slice(1));
+    }
+    // FIX-SAST-153 CWE-79 DOM XSS: document.write with URL data
+    document.write('<p>' + new URLSearchParams(location.search).get('msg') + '</p>');
+    // FIX-SAST-154 CWE-95: eval of URL data
+    eval(new URLSearchParams(location.search).get('cb'));
+    // FIX-SAST-155 CWE-601: DOM open redirect
+    function go(target) { window.location = target.slice(1); }
+    // FIX-SAST-156 CWE-346: postMessage without origin check + wildcard target
+    window.addEventListener('message', e => { document.body.innerHTML = e.data; });
+    window.parent.postMessage(document.cookie, '*');
+    // FIX-SAST-157 CWE-79: jQuery html() / $() with user input
+    $('#out').html(location.hash);
+    $(location.hash);
+    // FIX-SAST-158 CWE-922: sensitive data in localStorage
+    localStorage.setItem('authToken', 'eyJhbGciOiJIUzI1NiJ9.FIXTURE.FIXTURE');
+    localStorage.setItem('cardNumber', '4111111111111111');
+    // FIX-SEC-019: API key in client-side JS
+    const MAPS_KEY = 'AIzaSyFIXTUREfixtureFIXTUREfixtureFIXTUR';
+    // FIX-SAST-159 CWE-1004: cookie set without flags from JS
+    document.cookie = 'session=' + MAPS_KEY;
+  </script>
+</body>
+</html>

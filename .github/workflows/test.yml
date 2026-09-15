@@ -5,4 +5,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: echo "Add javascript test command here"
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm test

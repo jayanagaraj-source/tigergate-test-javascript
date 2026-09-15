@@ -1,0 +1,22 @@
+{
+  "_comment": "FIX-SEC-012..016: assorted provider credentials in a JSON config",
+  "azure": {
+    "storageConnectionString": "DefaultEndpointsProtocol=https;AccountName=fixturestorage;AccountKey=RklYVFVSRWZpeHR1cmVGSVhUVVJFZml4dHVyZUZJWFRVUkVmaXh0dXJlRklYVFVSRWZpeHR1cmVGSVhUVVJFZml4dHVyZUZJWFRVUkU9;EndpointSuffix=core.windows.net",
+    "clientSecret": "fix8Q~FIXTUREfixtureFIXTUREfixtureFIXTUREfixt"
+  },
+  "firebase": {
+    "apiKey": "AIzaSyFIXTUREfixtureFIXTUREfixtureFIXTUR",
+    "databaseURL": "https://tigergate-fixture.firebaseio.com"
+  },
+  "smtp": {
+    "host": "smtp.example.com",
+    "user": "mailer@example.com",
+    "password": "smtp-fixture-password-123"
+  },
+  "jwt": {
+    "hs256Secret": "hardcoded-hs256-signing-secret",
+    "sampleToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkZpeHR1cmUiLCJhZG1pbiI6dHJ1ZX0.KMUFsIDTnFmyG3nMiGM6H9FNFUROf3wh7SmqJp-QV30"
+  },
+  "basicAuthUrl": "https://svc-user:svc-fixture-pass@api.internal.example.com/v1",
+  "discordWebhook": "https://discord.com/api/webhooks/000000000000000000/FIXTUREfixtureFIXTUREfixtureFIXTUREfixtureFIXTUREfixtureFIXTUREfixt"
+}

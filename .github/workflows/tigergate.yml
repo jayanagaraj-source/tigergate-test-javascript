@@ -1,0 +1,269 @@
+# TigerGate security scan.
+#
+# Runs the TigerGate CLI container against this repository and uploads the
+# results to the TigerGate staging environment.
+#
+# The CLI image is fully driven by workflow inputs (cli_image / cli_tag), so a
+# custom or private build can be tested later by dispatching with different
+# values -- no edit to this file required.
+#
+# This repository is a deliberately vulnerable fixture (see SECURITY_FIXTURES.md)
+# and ships its own ground truth in EXPECTED_FINDINGS.md, so the summary step
+# below prints the expected counts next to whatever the scan reported.
+name: TigerGate Security Scan
+
+on:
+  workflow_dispatch:
+    inputs:
+      cli_image:
+        description: "TigerGate CLI image (without tag)"
+        type: string
+        required: true
+        default: tigergate/tigergate-cli
+      cli_tag:
+        description: "TigerGate CLI image tag"
+        type: string
+        required: true
+        default: latest
+      scan_type:
+        description: "Scan type to run"
+        type: choice
+        required: true
+        default: all
+        options:
+          - all
+          - sast
+          - sca
+          - secrets
+          - iac
+      quality_gate:
+        description: "Enforce the quality gate (fails the job when the gate fails)"
+        type: boolean
+        required: true
+        default: false
+      install_deps:
+        description: "Run npm ci before scanning (materialises node_modules for scanners that walk the installed tree)"
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+  statuses: write
+  pull-requests: write
+
+jobs:
+  scan:
+    name: TigerGate ${{ inputs.scan_type }} scan
+    runs-on: ubuntu-latest
+
+    # The whole job runs inside the selected TigerGate CLI image.
+    container:
+      image: ${{ inputs.cli_image }}:${{ inputs.cli_tag }}
+      # The image declares ENTRYPOINT ["tigergate"]. GitHub Actions overrides the
+      # entrypoint itself to keep the container alive and then execs each step in
+      # a shell, so no `options: --entrypoint` override is needed here.
+
+    env:
+      TIGERGATE_API_KEY: ${{ secrets.TIGERGATE_API_KEY }}
+      TIGERGATE_API_URL: https://api.staging.tigergate.dev
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history: the scanner reads git metadata, and --scan-scope full
+          # plus any diff/baseline logic needs more than a shallow clone.
+          fetch-depth: 0
+
+      - name: Configure git safe.directory
+        # The container runs as root while the workspace is checked out by the
+        # runner user, so git refuses to operate on it ("dubious ownership")
+        # until the path is explicitly trusted.
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config --global --add safe.directory '*'
+          git -C "$GITHUB_WORKSPACE" rev-parse --short HEAD
+
+      - name: TigerGate CLI version
+        # Printed before the scan so the exact CLI build under test is recorded
+        # in the job log.
+        run: tigergate --version
+
+      - name: Provision Node toolchain for npm resolution
+        # The public tigergate-cli image may ship no Node runtime. package-lock.json
+        # is committed, so lockfile-based SCA works regardless -- but a CLI that
+        # shells out to `npm ls` / `npm audit` to resolve the tree degrades to
+        # parsing package.json as text, which reports the 40 direct dependencies
+        # and misses all 668 transitive ones.
+        #
+        # Skipped automatically when the selected image already carries Node, so a
+        # custom cli_image needs no change to this workflow.
+        if: contains(fromJSON('["all","sca"]'), inputs.scan_type)
+        run: |
+          set -e
+          if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
+            echo "Node and npm already present in the image; skipping install."
+          elif command -v apt-get >/dev/null 2>&1; then
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            # Debian's nodejs package is older than current LTS but is sufficient
+            # for lockfile resolution. Swap in NodeSource if the CLI needs npm >= 10.
+            apt-get install -y -qq --no-install-recommends nodejs npm ca-certificates
+          elif command -v apk >/dev/null 2>&1; then
+            apk add --no-cache nodejs npm
+          else
+            echo "::warning::No node/npm and no apt-get or apk in this image - SCA will fall back to static package.json parsing and under-report transitive dependencies."
+            exit 0
+          fi
+
+          command -v node >/dev/null 2>&1 || exit 0
+          echo "node $(node --version) / npm $(npm --version)"
+
+      - name: Install dependencies
+        # Optional: some scanners walk node_modules rather than the lockfile.
+        # --ignore-scripts is deliberate and load-bearing -- this repo pins 37
+        # knowingly vulnerable packages, and their lifecycle scripts must not run
+        # on the runner. --no-audit keeps the install quiet; the scan does that job.
+        if: ${{ inputs.install_deps && contains(fromJSON('["all","sca"]'), inputs.scan_type) }}
+        run: |
+          set -e
+          if ! command -v npm >/dev/null 2>&1; then
+            echo "::warning::npm unavailable - skipping install; the scan will rely on package-lock.json."
+            exit 0
+          fi
+          npm ci --ignore-scripts --no-audit --no-fund
+          echo "installed packages: $(find node_modules -name package.json -maxdepth 3 2>/dev/null | wc -l)"
+
+      - name: Run TigerGate scan
+        id: scan
+        run: |
+          set -o pipefail
+          tigergate scan \
+            --type "${{ inputs.scan_type }}" \
+            --scan-scope full \
+            --upload \
+            --quality-gate=${{ inputs.quality_gate }} \
+            2>&1 | tee /tmp/tigergate-scan.log
+
+      - name: Scan result
+        if: always()
+        env:
+          CLI_IMAGE: ${{ inputs.cli_image }}
+          CLI_TAG: ${{ inputs.cli_tag }}
+          SCAN_TYPE: ${{ inputs.scan_type }}
+          QUALITY_GATE: ${{ inputs.quality_gate }}
+          INSTALL_DEPS: ${{ inputs.install_deps }}
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
+        run: |
+          LOG=/tmp/tigergate-scan.log
+
+          # Resolve one reported value. Uses the scan step's output first (for CLI
+          # builds that write to $GITHUB_OUTPUT), otherwise scans the captured log
+          # for the given label patterns. mode controls how the value is cut out of
+          # the matched text: num = trailing integer, url = the URL itself (never
+          # split on its own ":"), str = whatever follows the label separator.
+          extract() {
+            mode="$1"; preset="$2"; shift 2
+            if [ -n "$preset" ]; then printf '%s\n' "$preset"; return; fi
+            [ -f "$LOG" ] || { echo "n/a"; return; }
+            for pat in "$@"; do
+              m=$(grep -aioE "$pat" "$LOG" | tail -1)
+              [ -n "$m" ] || continue
+              case "$mode" in
+                num) v=$(printf '%s' "$m" | grep -oE '[0-9]+' | tail -1) ;;
+                url) v=$(printf '%s' "$m" | grep -oE 'https?://[^[:space:]"]+') ;;
+                *)   v=$(printf '%s' "$m" | sed -E 's/.*[:=][[:space:]]*//') ;;
+              esac
+              v=$(printf '%s' "$v" | sed -E 's/\x1b\[[0-9;]*m//g; s/^[[:space:]]+//; s/[[:space:]]+$//')
+              [ -n "$v" ] && { printf '%s\n' "$v"; return; }
+            done
+            echo "n/a"
+          }
+
+          SCAN_ID=$(extract  str "${{ steps.scan.outputs.scan_id }}"        'scan[ _-]?id[^A-Za-z0-9]{1,4}[A-Za-z0-9_-]+')
+          GATE=$(extract     str "${{ steps.scan.outputs.gate_status }}"    'quality[ _-]?gate[^:=]*[:=][[:space:]]*[A-Za-z]+' 'gate[ _-]?status[:=][[:space:]]*[A-Za-z]+')
+          TOTAL=$(extract    num "${{ steps.scan.outputs.total_findings }}" 'total[ _-]?findings[^0-9]{0,10}[0-9]+' 'total[^0-9a-z]{1,10}[0-9]+')
+          CRITICAL=$(extract num "${{ steps.scan.outputs.critical_count }}" 'critical[^0-9a-z]{0,10}[0-9]+')
+          HIGH=$(extract     num "${{ steps.scan.outputs.high_count }}"     'high[^0-9a-z]{0,10}[0-9]+')
+          URL=$(extract      url "${{ steps.scan.outputs.dashboard_url }}"  'https?://[^[:space:]"]*(scan|finding|dashboard|report)[^[:space:]"]*')
+
+          # Fixture-specific: SBOM component count and per-category findings, so the
+          # numbers can be compared against EXPECTED_FINDINGS.md without leaving the run.
+          # Each category tries a labelled pattern first, then a looser one. The
+          # loose form allows a word ("findings", "issues") between label and
+          # number, so it must not use [^0-9a-z] -- under grep -i that class
+          # excludes letters in both cases and would never span "SAST findings: 5".
+          SBOM=$(extract     num "${{ steps.scan.outputs.sbom_components }}" '[0-9]+[[:space:]]+(components|packages)[[:space:]]+(detected|found)' 'sbom[^0-9]{0,20}[0-9]+' 'components[^0-9]{0,10}[0-9]+')
+          SAST=$(extract     num ""                                          'sast[^0-9]{0,4}(findings|issues|results)[^0-9]{0,10}[0-9]+' 'sast[^0-9]{0,20}[0-9]+')
+          SCA=$(extract      num ""                                          'sca[^0-9]{0,4}(findings|issues|results)[^0-9]{0,10}[0-9]+' '\bsca\b[^0-9]{0,20}[0-9]+')
+          SECRETS=$(extract  num ""                                          'secrets?[^0-9]{0,4}(findings|issues|results|detected)[^0-9]{0,10}[0-9]+' '\bsecrets?\b[^0-9]{0,20}[0-9]+')
+          IAC=$(extract      num ""                                          'iac[^0-9]{0,4}(findings|issues|results)[^0-9]{0,10}[0-9]+' '\biac\b[^0-9]{0,20}[0-9]+')
+
+          {
+            echo "## TigerGate scan result"
+            echo
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| CLI image | \`$CLI_IMAGE:$CLI_TAG\` |"
+            echo "| Scan type | \`$SCAN_TYPE\` |"
+            echo "| Quality gate enforced | \`$QUALITY_GATE\` |"
+            echo "| Dependencies installed | \`$INSTALL_DEPS\` |"
+            echo "| Scan outcome | \`$SCAN_OUTCOME\` |"
+            echo "| Scan ID | $SCAN_ID |"
+            echo "| Gate status | $GATE |"
+            echo "| Total findings | $TOTAL |"
+            echo "| Critical | $CRITICAL |"
+            echo "| High | $HIGH |"
+            echo "| Dashboard / findings URL | $URL |"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+          # Ground truth lives in the repo, so detection gaps are visible in the run
+          # itself rather than only on the dashboard. Counts are derived from source,
+          # not hardcoded, so they stay correct as fixtures are added.
+          if [ -f scripts/list-fixtures.js ] && command -v node >/dev/null 2>&1; then
+            FIXTURES=$(node scripts/list-fixtures.js 2>&1 >/dev/null | grep -oE '^[0-9]+' | head -1)
+            EXP_SAST=$(node scripts/list-fixtures.js 2>/dev/null | grep -c '^FIX-SAST')
+            EXP_IAC=$(node scripts/list-fixtures.js  2>/dev/null | grep -c '^FIX-IAC')
+            EXP_SEC=$(node scripts/list-fixtures.js  2>/dev/null | grep -c '^FIX-SEC')
+            EXP_SBOM=$(node -e 'const l=require("./package-lock.json");const s=new Set(Object.entries(l.packages).filter(([k])=>k).map(([k,v])=>k.replace(/^.*node_modules\//,"")+"@"+v.version));console.log(s.size+1)')
+            EXP_DIRECT=$(node -e 'const p=require("./package.json");console.log(Object.keys({...p.dependencies,...p.devDependencies,...p.optionalDependencies}).length)')
+            {
+              echo
+              echo "### Reported vs expected (fixture ground truth)"
+              echo
+              echo "| Category | Reported | Expected | Source |"
+              echo "|---|---|---|---|"
+              echo "| SAST | $SAST | $EXP_SAST tagged | \`FIX-SAST-*\` tags |"
+              echo "| Secrets | $SECRETS | $EXP_SEC tags (~35 credentials) | \`FIX-SEC-*\` tags |"
+              echo "| IaC | $IAC | $EXP_IAC tagged | \`FIX-IAC-*\` tags |"
+              echo "| SCA | $SCA | 83 vulnerable packages (37 direct) | \`expected/npm-audit-baseline.json\` |"
+              echo "| SBOM components | $SBOM | $EXP_SBOM (unique name@version + root) | \`package-lock.json\` |"
+              echo "| Direct dependencies | - | $EXP_DIRECT | \`package.json\` |"
+              echo "| Total tagged fixtures | - | $FIXTURES | \`npm run fixtures\` |"
+              echo
+              echo "False positives: any finding in \`src/safe/safe.js\` or \`.env.example\` (negative controls, expect zero)."
+              echo "Known gap: \`public/vendor/jquery-1.12.4.min.js\` is not in the lockfile - only file-signature detection finds it."
+              echo
+              echo "Full scoring guide: [EXPECTED_FINDINGS.md]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$GITHUB_SHA/EXPECTED_FINDINGS.md)"
+            } | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # The value extraction above is best-effort: if this CLI build labels
+          # its summary differently, the fields read "n/a" and the raw output
+          # below is the source of truth.
+          echo
+          echo "----- raw CLI output (last 100 lines) -----"
+          if [ -f "$LOG" ]; then tail -100 "$LOG"; else echo "no scan log produced"; fi
+
+      - name: Upload scan log
+        # Kept as an artifact so a run can be compared against EXPECTED_FINDINGS.md
+        # after the fact, and so failed extractions can be debugged from full output.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tigergate-scan-${{ inputs.scan_type }}-${{ github.run_id }}
+          path: /tmp/tigergate-scan.log
+          if-no-files-found: warn
+          retention-days: 14

@@ -16,8 +16,11 @@ RUN apt-get update && apt-get install -y curl wget sudo openssh-server
 RUN curl -k -sSL http://get.example.com/install.sh | bash
 RUN wget --no-check-certificate -qO- https://example.com/setup.sh | sh
 
-# FIX-IAC-005: ADD from a remote URL
-ADD https://releases.example.com/tool.tar.gz /opt/tool.tar.gz
+# FIX-IAC-005: ADD from a remote URL (no checksum, no signature verification).
+# Host must actually resolve or BuildKit fails at solve time while computing the cache key,
+# before any RUN step executes. example.com is IANA-reserved and always answers 200, so the
+# insecure pattern stays scannable and the image still builds.
+ADD https://example.com/ /opt/tool.tar.gz
 
 WORKDIR /app
 # FIX-IAC-006: whole build context copied (includes .env, .git, keys)
